@@ -1,4 +1,6 @@
-# vid-crop.sh
+# vid-scrupts
+This will contain many scripts to hack up video files. for now, there is only vid-crop.sh
+The rest of this readme will pertain to vid-crop.sh until more scripts are added.
 
 A robust, production-grade Bash script for extracting a video segment from any file supported by `mkvmerge` and `ffmpeg`—with no race conditions, no zombie processes, no stale pipes, and unique log files for every run.
 
