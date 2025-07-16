@@ -10,17 +10,42 @@ LOG="/tmp/vidcrop_${UUID}.log"
 # ---- Logging ----
 log() { echo "[$(date +'%F %T')] $*" | tee -a "$LOG" >&2; }
 err() { echo "[$(date +'%F %T')] ERROR: $*" | tee -a "$LOG" >&2; }
-debug() { [ "$VERBOSE" -eq 1 ] && log "DEBUG: $*"; }
+debug() { [ "${VERBOSE:-0}" -eq 1 ] && log "DEBUG: $*"; }
+
+# ---- Defaults ----
+QUIET=0
+VERBOSE=0
+FF_ARGS=()
+MK_ARGS=()
+INPUT=""
+OUTPUT=""
+START=""
+END=""
+OVERWRITE=0
+MKV_PID=""
+FFMPEG_PID=""
 
 # ---- Cleanup ----
 cleanup() {
     debug "Running cleanup"
     [[ -p "$PIPE" ]] && rm -f "$PIPE"
-    [[ -n "${MKV_PID:-}" ]] && kill "$MKV_PID" 2>/dev/null || true
-    wait "${MKV_PID:-}" 2>/dev/null || true
+    if [[ -n "$MKV_PID" ]]; then
+        kill "$MKV_PID" 2>/dev/null || true
+        wait "$MKV_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$FFMPEG_PID" ]]; then
+        kill "$FFMPEG_PID" 2>/dev/null || true
+        wait "$FFMPEG_PID" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
-trap 'err "Interrupted"; exit 2' SIGINT SIGTERM SIGHUP
+
+handle_signal() {
+    err "Interrupted, killing subprocesses…"
+    cleanup
+    exit 2
+}
+trap handle_signal SIGINT SIGTERM SIGHUP
 
 # ---- Help ----
 show_help() {
@@ -33,7 +58,7 @@ Required:
   --end=TIME        End time (e.g., 02:29:27)
 
 Optional:
-  --out=FILE        Output filename (defaults to input name + '_out.EXT' where EXT from --out or input)
+  --out=FILE        Output filename (defaults to input name + '_out.EXT')
   --overwrite       Allow overwrite of output file (else will bail)
   -v, --verbose     Verbose mode (ffmpeg/mkvmerge info, script messages)
   -q, --quiet       Quiet mode (minimal output, only fatal errors)
@@ -44,21 +69,10 @@ Optional:
 Notes:
   - All multi-word ffmpeg/mkvmerge options must be supplied as multiple -ff=... or -mk=... flags.
   - Output format is determined by your output filename (e.g., .mp4, .mkv, .mov, etc).
-  - A temp FIFO and log will be created using a UUID, to avoid clobbering other runs.
+  - Temp FIFO and log will be created using a UUID.
   - Log is at $LOG
 EOF
 }
-
-# ---- Defaults ----
-QUIET=0
-VERBOSE=0
-FF_ARGS=()
-MK_ARGS=()
-INPUT=""
-OUTPUT=""
-START=""
-END=""
-OVERWRITE=0
 
 # ---- Arg Parsing ----
 for arg in "$@"; do
@@ -142,7 +156,7 @@ while ! (exec 3<>"$PIPE") 2>/dev/null; do
   ((timeout--))
   if [ $timeout -le 0 ]; then
     err "FIFO $PIPE not available after 10 seconds."
-    kill $MKV_PID 2>/dev/null || true
+    kill "$MKV_PID" 2>/dev/null || true
     exit 1
   fi
   sleep 1
@@ -150,14 +164,21 @@ done
 exec 3>&-  # Close test FD
 
 # ---- Start ffmpeg ----
-if ! "${FFMPEG_CMD[@]}" 2>>"$LOG"; then
-  err "ffmpeg failed."
-  kill $MKV_PID 2>/dev/null || true
+"${FFMPEG_CMD[@]}" 2>>"$LOG" &
+FFMPEG_PID=$!
+
+# ---- Wait for ffmpeg ----
+wait "$FFMPEG_PID"
+ffmpeg_status=$?
+if [ "$ffmpeg_status" -ne 0 ]; then
+  err "ffmpeg failed with exit code $ffmpeg_status"
+  kill "$MKV_PID" 2>/dev/null || true
+  wait "$MKV_PID" 2>/dev/null || true
   exit 3
 fi
 
 # ---- Reap mkvmerge, Check for Fail ----
-wait $MKV_PID
+wait "$MKV_PID"
 mkv_status=$?
 if [ "$mkv_status" -ne 0 ]; then
   err "mkvmerge exited with status $mkv_status"
