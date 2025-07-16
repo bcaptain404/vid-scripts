@@ -1,4 +1,4 @@
-# vid-scrupts
+# vid-scripts
 This will contain many scripts to hack up video files. for now, there is only vid-crop.sh
 The rest of this readme will pertain to vid-crop.sh until more scripts are added.
 
