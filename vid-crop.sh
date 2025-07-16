@@ -50,6 +50,7 @@ trap handle_signal SIGINT SIGTERM SIGHUP
 # ---- Help ----
 show_help() {
   cat <<EOF
+$0 v0.1
 Usage: $(basename "$0") --in=FILE --start=TIME --end=TIME [options]
 
 Required:
