@@ -52,9 +52,9 @@ show_help() {
   echo "  --out=filename.ext      Custom output filename"
   echo "  --overwrite             Allow overwriting existing output"
   echo "  --verbose               Print what's happening"
-  echo "  --debug                 Print ffmpeg commands"
-  echo "  --install-deps          Install ffmpeg"
-  echo "  --install-deps-full     Install ffmpeg + Python + librosa"
+  echo "  --debug                 Print debug stuff"
+  echo "  --install-deps          Install basic dependencies"
+  echo "  --install-deps-full     Install basic dependencies + Python + librosa (for --auto-*)"
   echo "  -h, --help              Show this help"
   echo ""
 }
@@ -88,13 +88,13 @@ rms = float(librosa.feature.rms(y=y).mean())
 zcr = float(librosa.feature.zero_crossing_rate(y).mean())
 centroid = float(librosa.feature.spectral_centroid(y=y, sr=sr).mean())
 filters = []
-if rms < 0.03:
-    filters.append("dynaudnorm")
-if rms > 0.3:
+# ALWAYS normalize, no matter what!
+filters.append("dynaudnorm")
+if rms > 0.15:
     filters.append("acompressor=threshold=-18dB:ratio=3:attack=20:release=250")
-if centroid > 4000:
+if centroid > 3500:
     filters.extend(["highpass=f=80", "lowpass=f=12000"])
-print("\n".join(filters))
+print("\\n".join(filters))
 EOF
   )
 
@@ -103,8 +103,10 @@ EOF
     exit 1
   fi
 
-  IFS=$'\n' read -r -d '' -a ORDERED_FILTERS <<<"$analysis"$'\0'
+  IFS=$'\n' read -r -a ORDERED_FILTERS <<<"$analysis"
+
 }
+
 
 # Parse flags
 for param in "${PARAMS[@]}"; do
@@ -169,17 +171,25 @@ EXT="${OUTPUT_TYPE}"
 FILTER_CHAIN=$(IFS=","; echo "${ORDERED_FILTERS[*]}")
 [[ $VERBOSE -eq 1 ]] && echo "🔧 Filter chain: $FILTER_CHAIN"
 
+
+echo "INPUT: $INPUT"
+echo "TEMP_AUDIO: $TEMP_AUDIO"
+echo "FILTER_CHAIN: $FILTER_CHAIN"
+echo "TEMP_PROCESSED: $TEMP_PROCESSED"
+echo "OUTPUT: $OUTPUT"
+
+
 TEMP_AUDIO="/tmp/audio_$$.wav"
-ffmpeg -y -i "$INPUT" -vn -acodec pcm_s16le -ar 44100 "$TEMP_AUDIO" >/dev/null 2>&1
+ffmpeg -y -i "$INPUT" -vn -acodec pcm_s16le -ar 44100 "$TEMP_AUDIO"
 
 TEMP_PROCESSED="/tmp/processed_$$.wav"
-ffmpeg -y -i "$TEMP_AUDIO" -af "$FILTER_CHAIN" "$TEMP_PROCESSED" >/dev/null 2>&1
+ffmpeg -y -i "$TEMP_AUDIO" -af "$FILTER_CHAIN" "$TEMP_PROCESSED"
 
 # Handle reattachment
 if [[ $NO_VID -eq 1 ]]; then
-  ffmpeg -y -i "$TEMP_PROCESSED" "$OUTPUT" >/dev/null 2>&1
+  ffmpeg -y -i "$TEMP_PROCESSED" "$OUTPUT"
 else
-  ffmpeg -y -i "$INPUT" -i "$TEMP_PROCESSED" -map 0:v -map 1:a -c:v copy -shortest "$OUTPUT" >/dev/null 2>&1
+  ffmpeg -y -i "$INPUT" -i "$TEMP_PROCESSED" -map 0:v -map 1:a -c:v copy -shortest "$OUTPUT"
 fi
 
 rm -f "$TEMP_AUDIO" "$TEMP_PROCESSED"
