@@ -4,7 +4,7 @@
 set -e
 
 show_help() {
-  echo "Usage: $0 input.wav [options]"
+  echo "Usage: $0 input.wav|input.mp4 [options]"
   echo ""
   echo "Options:"
   echo "  --normalize          Apply basic peak normalization"
@@ -13,33 +13,47 @@ show_help() {
   echo "  --compress-extra     Apply aggressive compression"
   echo "  --eq                 Cut sub-bass (<80Hz) and high fizz (>12kHz)"
   echo "  --eq-extra           Add slight midrange boost (1-5kHz)"
-  echo "  --all                Do all basic cleanup (normalize, compress, eq)"
+  echo "  --no-vid             Do not include original video (default: preserve it if input is video)"
+  echo "  --mp3                Output to MP3 format (implies --no-vid)"
+  echo "  --all                Do all basic cleanup (eq → compress → normalize)"
+  echo "  --install-deps       Install ffmpeg and required packages via apt"
   echo ""
-  echo "Output will be saved as output_cleaned.wav"
+  echo "Output will be saved as output_cleaned.wav or output_cleaned.mp3"
 }
 
-# Argument parsing
-INPUT=""
-NORMALIZE=0
-NORM_EXTRA=0
-COMPRESS=0
-COMPRESS_EXTRA=0
-EQ=0
-EQ_EXTRA=0
+# Dependencies
+install_deps() {
+  sudo apt update
+  sudo apt install -y ffmpeg
+  echo "✅ Dependencies installed."
+  exit 0
+}
 
+# Initialize flags and arrays
+INPUT=""
+OUTPUT_TYPE="wav"
+NO_VID=0
+DO_ALL=0
+ORDERED_FILTERS=()
+
+# Parse args
 for arg in "$@"; do
   case $arg in
-    *.wav) INPUT="$arg" ;;
-    --normalize) NORMALIZE=1 ;;
-    --normalize-extra) NORM_EXTRA=1 ;;
-    --compress) COMPRESS=1 ;;
-    --compress-extra) COMPRESS_EXTRA=1 ;;
-    --eq) EQ=1 ;;
-    --eq-extra) EQ_EXTRA=1 ;;
+    --install-deps) install_deps ;;
+    *.wav|*.mp4|*.mov|*.mkv|*.flac) INPUT="$arg" ;;
+    --normalize) ORDERED_FILTERS+=("dynaudnorm") ;;
+    --normalize-extra) ORDERED_FILTERS+=("loudnorm=I=-14:TP=-1.5:LRA=11") ;;
+    --compress) ORDERED_FILTERS+=("acompressor=threshold=-18dB:ratio=3:attack=20:release=250") ;;
+    --compress-extra) ORDERED_FILTERS+=("acompressor=threshold=-24dB:ratio=6:attack=5:release=100") ;;
+    --eq) ORDERED_FILTERS+=("highpass=f=80" "lowpass=f=12000") ;;
+    --eq-extra) ORDERED_FILTERS+=("equalizer=f=2000:t=q:w=1:g=3") ;;
+    --no-vid) NO_VID=1 ;;
+    --mp3) OUTPUT_TYPE="mp3"; NO_VID=1 ;;
     --all)
-      NORMALIZE=1
-      COMPRESS=1
-      EQ=1
+      ORDERED_FILTERS=("highpass=f=80" "lowpass=f=12000" \
+                       "acompressor=threshold=-18dB:ratio=3:attack=20:release=250" \
+                       "dynaudnorm")
+      DO_ALL=1
       ;;
     -h|--help)
       show_help
@@ -48,47 +62,40 @@ for arg in "$@"; do
   esac
 done
 
+# Sanity checks
 if [[ -z "$INPUT" ]]; then
-  echo "Error: No input file specified."
+  echo "❌ No input file specified."
   show_help
   exit 1
 fi
 
-OUTPUT="output_cleaned.wav"
-FILTERS=""
-
-# EQ filter
-if [[ $EQ -eq 1 ]]; then
-  FILTERS+="highpass=f=80,lowpass=f=12000"
-fi
-if [[ $EQ_EXTRA -eq 1 ]]; then
-  FILTERS+=",equalizer=f=2000:t=q:w=1:g=3"
-fi
-
-# Compression
-if [[ $COMPRESS -eq 1 ]]; then
-  FILTERS+=",acompressor=threshold=-18dB:ratio=3:attack=20:release=250"
-fi
-if [[ $COMPRESS_EXTRA -eq 1 ]]; then
-  FILTERS+=",acompressor=threshold=-24dB:ratio=6:attack=5:release=100"
-fi
-
-# Normalization
-if [[ $NORMALIZE -eq 1 ]]; then
-  FILTERS+=",dynaudnorm"
-fi
-if [[ $NORM_EXTRA -eq 1 ]]; then
-  FILTERS+=",loudnorm=I=-14:TP=-1.5:LRA=11"
-fi
-
-# Strip leading comma if needed
-FILTERS="${FILTERS#,}"
-
-# Final ffmpeg command
-if [[ -z "$FILTERS" ]]; then
-  echo "No filters specified. Use --help for options."
+if [[ ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
+  echo "❌ No filters specified."
+  show_help
   exit 1
 fi
 
-ffmpeg -y -i "$INPUT" -af "$FILTERS" "$OUTPUT"
-echo "✅ Cleaned audio saved to $OUTPUT"
+# Construct filter string
+FILTER_CHAIN=$(IFS=, ; echo "${ORDERED_FILTERS[*]}")
+
+# Derive output filename
+OUT_EXT="$OUTPUT_TYPE"
+OUTPUT="output_cleaned.$OUT_EXT"
+TEMP_AUDIO="temp_audio.wav"
+
+# Extract and process audio
+ffmpeg -y -i "$INPUT" -vn -acodec pcm_s16le -ar 44100 -ac 2 "$TEMP_AUDIO"
+ffmpeg -y -i "$TEMP_AUDIO" -af "$FILTER_CHAIN" "filtered_audio.wav"
+
+# Recombine or convert
+if [[ "$OUTPUT_TYPE" == "mp3" ]]; then
+  ffmpeg -y -i "filtered_audio.wav" -codec:a libmp3lame -qscale:a 2 "$OUTPUT"
+elif [[ "$NO_VID" -eq 1 ]]; then
+  mv "filtered_audio.wav" "$OUTPUT"
+else
+  ffmpeg -y -i "$INPUT" -i "filtered_audio.wav" -c:v copy -map 0:v:0 -map 1:a:0 -shortest "$OUTPUT"
+fi
+
+# Cleanup
+rm -f "$TEMP_AUDIO" "filtered_audio.wav"
+echo "✅ Output saved as $OUTPUT"
