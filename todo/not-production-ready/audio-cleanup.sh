@@ -15,7 +15,8 @@ show_help() {
   echo "  --eq-extra              Slight midrange boost"
   echo "  --preset=TYPE           Preset: vocals, inst, music, podcast, audience, bar, loud-bar"
   echo "  --all                   EQ -> Compress -> Normalize"
-  echo "  --auto                  Smart AF auto-detect via Python (requires --install-deps-full)"
+  echo "  --auto-suggest          Smart AF analysis only (shows recommended flags)"
+  echo "  --auto-apply            Smart AF full-auto (analyze + apply)"
   echo "  --dry-run               Show what would be done"
   echo "  --mp3                   Output as MP3 (implies --no-vid)"
   echo "  --no-vid                Skip video reattachment"
@@ -24,10 +25,8 @@ show_help() {
   echo "  --verbose               Print what's happening"
   echo "  --debug                 Print ffmpeg commands"
   echo "  --install-deps          Install ffmpeg"
-  echo "  --install-deps-full     Install full stack (ffmpeg, python3, pip, numpy, librosa)"
+  echo "  --install-deps-full     Install ffmpeg + Python + librosa"
   echo "  -h, --help              Show this help"
-  echo ""
-  echo "Smart auto mode uses Python and librosa for real signal analysis."
   echo ""
 }
 
@@ -44,7 +43,7 @@ install_deps_full() {
   exit 0
 }
 
-smart_auto_detect() {
+smart_auto_suggest() {
   python3 - "$1" <<'EOF'
 import sys
 import librosa
@@ -61,21 +60,59 @@ print(f"RMS loudness: {rms:.5f}")
 print(f"Zero-crossing rate: {zcr:.5f}")
 print(f"Spectral centroid: {centroid:.2f} Hz")
 
+flags = []
 if rms < 0.02:
-    print("--compress-extra")
+    flags.append("--compress-extra")
 elif rms < 0.04:
-    print("--compress")
-else:
-    print("--no-compression-needed")
+    flags.append("--compress")
 
 if centroid < 1500:
-    print("--eq-extra")
+    flags.append("--eq-extra")
 else:
-    print("--eq")
+    flags.append("--eq")
 
-print("--normalize")
+flags.append("--normalize")
+print("Suggested flags: " + " ".join(flags))
 EOF
   exit 0
+}
+
+smart_auto_apply() {
+  mapfile -t AUTO_FLAGS < <(python3 - "$1" <<'EOF'
+import sys
+import librosa
+import numpy as np
+
+path = sys.argv[1]
+y, sr = librosa.load(path, sr=None)
+rms = np.mean(librosa.feature.rms(y=y))
+zcr = np.mean(librosa.feature.zero_crossing_rate(y))
+centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
+
+flags = []
+if rms < 0.02:
+    flags.append("--compress-extra")
+elif rms < 0.04:
+    flags.append("--compress")
+
+if centroid < 1500:
+    flags.append("--eq-extra")
+else:
+    flags.append("--eq")
+
+flags.append("--normalize")
+print("\n".join(flags))
+EOF
+  )
+  for flag in "${AUTO_FLAGS[@]}"; do
+    case $flag in
+      --compress) ORDERED_FILTERS+=("acompressor=threshold=-18dB:ratio=3:attack=20:release=250") ;;
+      --compress-extra) ORDERED_FILTERS+=("acompressor=threshold=-24dB:ratio=6:attack=5:release=100") ;;
+      --eq) ORDERED_FILTERS+=("highpass=f=80" "lowpass=f=12000") ;;
+      --eq-extra) ORDERED_FILTERS+=("equalizer=f=2000:t=q:w=1:g=3") ;;
+      --normalize) ORDERED_FILTERS+=("dynaudnorm") ;;
+    esac
+  done
 }
 
 INPUT=""
@@ -86,7 +123,6 @@ DEBUG=0
 VERBOSE=0
 OVERWRITE=0
 DRY_RUN=0
-AUTO=0
 PRESET=""
 OUTPUT=""
 ORDERED_FILTERS=()
@@ -107,7 +143,8 @@ for arg in "$@"; do
     --verbose) VERBOSE=1 ;;
     --debug) DEBUG=1 ;;
     --dry-run) DRY_RUN=1 ;;
-    --auto) AUTO=1 ;;
+    --auto-suggest) smart_auto_suggest "$2" ;;
+    --auto-apply) smart_auto_apply "$2" ;;
     --all) ORDERED_FILTERS=("highpass=f=80" "lowpass=f=12000" "acompressor=threshold=-18dB:ratio=3:attack=20:release=250" "dynaudnorm") ;;
     --preset=*) PRESET="${arg#--preset=}" ;;
     --out=*) OUTPUT="${arg#--out=}" ;;
@@ -128,11 +165,6 @@ if [[ -n "$PRESET" ]]; then
     loud-bar) ORDERED_FILTERS=("highpass=f=80" "lowpass=f=12000" "equalizer=f=2000:t=q:w=1:g=3" "acompressor=threshold=-24dB:ratio=6:attack=5:release=100" "loudnorm=I=-14:TP=-1.5:LRA=11") ;;
     *) echo "❌ Unknown preset: $PRESET"; exit 1 ;;
   esac
-fi
-
-if [[ "$AUTO" -eq 1 ]]; then
-  smart_auto_detect "$INPUT"
-  exit 0
 fi
 
 if [[ -z "$INPUT" ]]; then echo "❌ No input file specified."; show_help; exit 1; fi
