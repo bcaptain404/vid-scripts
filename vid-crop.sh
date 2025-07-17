@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# todo: preset arguments to select video qualities
+
 set -o errexit -o pipefail -o nounset
 
 # ---- UUID and Paths ----
@@ -46,6 +48,9 @@ handle_signal() {
     exit 2
 }
 trap handle_signal SIGINT SIGTERM SIGHUP
+
+# todo: --stop as synonym for --end
+# todo: --begin as synonym fo --start
 
 # ---- Help ----
 show_help() {
@@ -136,6 +141,7 @@ if ! mkfifo "$PIPE"; then
 fi
 
 # ---- Build Commands ----
+debug "Building Commands..."
 MKV_CMD=(mkvmerge -o "$PIPE" --split parts:"$START"-"$END" "$INPUT")
 for mk in "${MK_ARGS[@]}"; do MKV_CMD+=("$mk"); done
 
@@ -152,6 +158,7 @@ fi
 MKV_PID=$!
 
 # ---- Wait for FIFO to become writable (avoids race/hang) ----
+debug "Waiting for FIFIO to become writable..."
 timeout=10
 while ! (exec 3<>"$PIPE") 2>/dev/null; do
   ((timeout--))
@@ -165,10 +172,12 @@ done
 exec 3>&-  # Close test FD
 
 # ---- Start ffmpeg ----
+debug "Starting ffmpeg..."
 "${FFMPEG_CMD[@]}" 2>>"$LOG" &
 FFMPEG_PID=$!
 
 # ---- Wait for ffmpeg ----
+debug "Waiting for ffmpeg..."
 wait "$FFMPEG_PID"
 ffmpeg_status=$?
 if [ "$ffmpeg_status" -ne 0 ]; then
@@ -179,6 +188,7 @@ if [ "$ffmpeg_status" -ne 0 ]; then
 fi
 
 # ---- Reap mkvmerge, Check for Fail ----
+debug "Reading mkvmerge..."
 wait "$MKV_PID"
 mkv_status=$?
 if [ "$mkv_status" -ne 0 ]; then
