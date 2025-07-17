@@ -87,20 +87,23 @@ y, sr = librosa.load(f)
 rms = float(librosa.feature.rms(y=y).mean())
 zcr = float(librosa.feature.zero_crossing_rate(y).mean())
 centroid = float(librosa.feature.spectral_centroid(y=y, sr=sr).mean())
-actions = []
-if rms < 0.03: actions.append("dynaudnorm")
-if rms > 0.3: actions.append("acompressor=threshold=-18dB:ratio=3:attack=20:release=250")
-if centroid > 4000: actions.append("highpass=f=80")
-if centroid > 4000: actions.append("lowpass=f=12000")
-print("\n".join(actions))
+filters = []
+if rms < 0.03:
+    filters.append("dynaudnorm")
+if rms > 0.3:
+    filters.append("acompressor=threshold=-18dB:ratio=3:attack=20:release=250")
+if centroid > 4000:
+    filters.extend(["highpass=f=80", "lowpass=f=12000"])
+print("\n".join(filters))
 EOF
   )
-  IFS=$'\n' read -r -d '' -a ORDERED_FILTERS <<<"$analysis"$'\0'
 
-  if [[ ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
+  if [[ -z "$analysis" ]]; then
     echo "❌ No filters determined by --auto-apply"
     exit 1
   fi
+
+  IFS=$'\n' read -r -d '' -a ORDERED_FILTERS <<<"$analysis"$'\0'
 }
 
 # Parse flags
@@ -141,13 +144,7 @@ done
 [[ -z "$INPUT" ]] && echo "❌ No input file specified." && show_help && exit 1
 
 [[ $AUTO_SUGGEST -eq 1 ]] && smart_auto_suggest "$INPUT"
-if [[ $AUTO_APPLY -eq 1 ]]; then
-  smart_auto_apply "$INPUT"
-  if [[ ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
-    echo "❌ No filters determined by --auto-apply"
-    exit 1
-  fi
-fi
+[[ $AUTO_APPLY -eq 1 ]] && smart_auto_apply "$INPUT"
 
 # If --all was requested and no custom flags exist
 if [[ $DO_ALL -eq 1 && ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
@@ -180,7 +177,7 @@ ffmpeg -y -i "$TEMP_AUDIO" -af "$FILTER_CHAIN" "$TEMP_PROCESSED" >/dev/null 2>&1
 
 # Handle reattachment
 if [[ $NO_VID -eq 1 ]]; then
-  ffmpeg -y -i "$TEMP_PROCESSED" "${OUTPUT}" >/dev/null 2>&1
+  ffmpeg -y -i "$TEMP_PROCESSED" "$OUTPUT" >/dev/null 2>&1
 else
   ffmpeg -y -i "$INPUT" -i "$TEMP_PROCESSED" -map 0:v -map 1:a -c:v copy -shortest "$OUTPUT" >/dev/null 2>&1
 fi
