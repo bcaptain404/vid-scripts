@@ -1,34 +1,42 @@
 #!/usr/bin/env python3
 """
 audio_cleanup.py - Smarter-than-your-ex music/audio fixer
+
 Usage:
-    python3 audio_cleanup.py [-h] [--normalize] [--normalize-extra] [--compress] [--compress-extra] [--eq] [--eq-extra] [--deess] [--preset PRESET] [--all] [--auto-suggest] [--auto-apply] [--dry-run] [--mp3] [--no-vid] [--out OUT] [--overwrite] [--verbose] [--debug] [--install-deps] [--install-deps-full] input
+    python3 audio_cleanup.py input.wav|input.mp4 [options]
 
-positional arguments:
-  input                 Input file (.wav, .mp4, .mov, .mkv, .flac)
+Options:
+    --normalize             Apply basic peak normalization
+    --normalize-extra       LUFS loudness normalization
+    --compress              Light compression
+    --compress-extra        Aggressive compression
+    --eq                    Cut sub-bass (<80Hz) & fizz (>12kHz)
+    --eq-extra              Slight midrange boost
+    --deess                 Apply de-essing (reduce harsh S sounds)
+    --preset=TYPE           Preset: vocals, inst, music, podcast, audience, bar, loud-bar
+    --all                   EQ -> Compress -> Normalize
+    --auto-suggest          Smart AF analysis only (shows recommended flags)
+    --auto-apply            Smart AF full-auto (analyze + apply)
+    --classify              Print a guess for content type and recommended preset
+    --dry-run               Show what would be done (no output written)
+    --mp3                   Output as MP3 (implies --no-vid)
+    --no-vid                Skip video reattachment (audio-only output)
+    --out=filename.ext      Custom output filename
+    --overwrite             Allow overwriting existing output
+    --verbose               Print what's happening
+    --debug                 Print debug stuff
+    --install-deps          Install basic dependencies (ffmpeg)
+    --install-deps-full     Install ffmpeg + Python audio deps (librosa, numpy, soundfile)
+    --report                Show before/after audio stats for input and output
+    -h, --help              Show this help
 
-options:
-  --normalize           Apply basic peak normalization
-  --normalize-extra     LUFS loudness normalization
-  --compress            Light compression
-  --compress-extra      Aggressive compression
-  --eq                  Cut sub-bass (<80Hz) & fizz (>12kHz)
-  --eq-extra            Slight midrange boost
-  --deess               Apply de-essing (reduce harsh S sounds)
-  --preset PRESET       Preset: vocals, inst, music, podcast, audience, bar, loud-bar
-  --all                 EQ -> Compress -> Normalize
-  --auto-suggest        Smart AF analysis only (shows recommended flags)
-  --auto-apply          Smart AF full-auto (analyze + apply)
-  --dry-run             Show what would be done
-  --mp3                 Output as MP3 (implies --no-vid)
-  --no-vid              Skip video reattachment
-  --out OUT             Custom output filename
-  --overwrite           Allow overwriting existing output
-  --verbose             Print what's happening
-  --debug               Print debug stuff
-  --install-deps        Install basic dependencies
-  --install-deps-full   Install basic dependencies + Python + librosa (for --auto-*)
-  -h, --help            Show this help
+Supported formats: .wav, .mp4, .mov, .mkv, .flac
+
+Examples:
+    python3 audio_cleanup.py song.mp4 --auto-apply --out=cleaned.mp4
+    python3 audio_cleanup.py jam.wav --classify
+    python3 audio_cleanup.py gig.wav --preset=vocals --mp3 --out=final.mp3
+    python3 audio_cleanup.py track.wav --auto-suggest
 """
 
 import sys
@@ -38,9 +46,7 @@ import tempfile
 import shutil
 import argparse
 
-from audio_analysis import analyze_audio, suggest_filters, auto_filters, print_stats
-
-
+from audio_analysis import analyze_audio, suggest_filters, auto_filters, print_stats, classify_content, suggest_preset
 
 def install_deps(full=False):
     import platform
@@ -79,6 +85,7 @@ def main():
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--auto-suggest", action="store_true")
     parser.add_argument("--auto-apply", action="store_true")
+    parser.add_argument("--classify", action="store_true", help="Print content type guess and recommended preset")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--mp3", action="store_true")
     parser.add_argument("--no-vid", action="store_true")
@@ -104,19 +111,36 @@ def main():
         print(f"❌ Input file '{input_file}' not found.")
         sys.exit(1)
 
+    # Allow only supported formats for sanity
+    allowed_ext = (".wav", ".mp4", ".mov", ".mkv", ".flac")
     basename, in_ext = os.path.splitext(os.path.basename(input_file))
+    if in_ext.lower() not in allowed_ext:
+        print(f"❌ Unsupported input file format: {in_ext}")
+        sys.exit(1)
+
     output_type = "mp3" if args.mp3 else "wav"
     output_file = args.out or f"{basename}_cleaned.{output_type}"
     if os.path.exists(output_file) and not args.overwrite:
         print(f"❌ Output file '{output_file}' exists. Use --overwrite.")
         sys.exit(1)
 
+    # Classification (on request)
+    if args.classify:
+        stats = analyze_audio(input_file)
+        ctype = classify_content(stats)
+        preset = suggest_preset(ctype)
+        print(f"Guessed content type: {ctype}")
+        print(f"Suggested preset: --preset={preset}")
+        sys.exit(0)
+
     filters = []
     # Handle flags to build filter list
     if args.all:
-        filters = ["highpass=f=80", "lowpass=f=12000",
-                   "acompressor=threshold=-18dB:ratio=3:attack=20:release=250",
-                   "loudnorm=I=-14:TP=-1.5:LRA=11"]
+        filters = [
+            "highpass=f=80", "lowpass=f=12000",
+            "acompressor=threshold=-18dB:ratio=3:attack=20:release=250",
+            "loudnorm=I=-14:TP=-1.5:LRA=11"
+        ]
     if args.normalize:
         filters.append("dynaudnorm")
     if args.normalize_extra:
@@ -131,6 +155,19 @@ def main():
         filters.append("equalizer=f=2000:t=q:w=1:g=3")
     if args.deess:
         filters.append("deesser")
+    if args.preset:
+        if args.preset == "vocals":
+            filters = ["highpass=f=80", "lowpass=f=12000", "deesser", "loudnorm=I=-14:TP=-1.5:LRA=11"]
+        elif args.preset == "inst":
+            filters = ["highpass=f=60", "lowpass=f=16000", "loudnorm=I=-14:TP=-1.5:LRA=11"]
+        elif args.preset == "music":
+            filters = [
+                "highpass=f=80", "lowpass=f=14000",
+                "acompressor=threshold=-18dB:ratio=3:attack=20:release=250",
+                "loudnorm=I=-14:TP=-1.5:LRA=11"
+            ]
+        elif args.preset == "podcast":
+            filters = ["highpass=f=100", "lowpass=f=8000", "loudnorm=I=-16:TP=-2:LRA=10"]
 
     if args.auto_suggest or args.auto_apply:
         audio_stats = analyze_audio(input_file)
@@ -201,7 +238,6 @@ def main():
                 out_analyze = temp_out_audio
             out_stats = analyze_audio(out_analyze)
             print_stats(out_stats, label="Output (After Processing)")
-
 
         print(f"✅ Output saved to: {output_file}")
 
