@@ -1,4 +1,12 @@
 import librosa
+import librosa
+
+def print_stats(stats, label=""):
+    if label:
+        print(f"\n--- {label} ---")
+    print(f"RMS loudness:       {stats['rms']:.5f}")
+    print(f"Zero-crossing rate: {stats['zcr']:.5f}")
+    print(f"Spectral centroid:  {stats['centroid']:.2f} Hz")
 
 def analyze_audio(file):
     y, sr = librosa.load(file)
@@ -12,6 +20,7 @@ def suggest_filters(stats):
     print(f"RMS loudness: {stats['rms']:.5f}")
     print(f"Zero-crossing rate: {stats['zcr']:.5f}")
     print(f"Spectral centroid: {stats['centroid']:.2f} Hz")
+    print_stats(stats)
     if stats['rms'] < 0.03: print("--normalize")
     if stats['rms'] > 0.3: print("--compress")
     if stats['centroid'] > 4000: print("--eq")

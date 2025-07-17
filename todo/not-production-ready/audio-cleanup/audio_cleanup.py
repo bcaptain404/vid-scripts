@@ -38,7 +38,9 @@ import tempfile
 import shutil
 import argparse
 
-from audio_analysis import analyze_audio, suggest_filters, auto_filters
+from audio_analysis import analyze_audio, suggest_filters, auto_filters, print_stats
+
+
 
 def install_deps(full=False):
     import platform
@@ -86,6 +88,7 @@ def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--install-deps", action="store_true")
     parser.add_argument("--install-deps-full", action="store_true")
+    parser.add_argument("--report", action="store_true", help="Show before/after audio stats")
     args = parser.parse_args()
 
     # Install deps and exit if asked
@@ -182,6 +185,23 @@ def main():
                 "ffmpeg", "-y", "-i", input_file, "-i", temp_processed,
                 "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-shortest", output_file
             ], verbose=args.verbose)
+
+        # After output, if report is requested
+        if args.report:
+            in_stats = analyze_audio(input_file)
+            print_stats(in_stats, label="Input (Before Processing)")
+            # Figure out actual audio file for output:
+            out_analyze = output_file
+            if not args.no_vid and in_ext.lower() != ".wav" and not args.mp3:
+                # Output is video, need to extract audio to temp
+                temp_out_audio = os.path.join(tmpdir, "final_out.wav")
+                ffmpeg_cmd([
+                    "ffmpeg", "-y", "-i", output_file, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", temp_out_audio
+                ], verbose=args.verbose)
+                out_analyze = temp_out_audio
+            out_stats = analyze_audio(out_analyze)
+            print_stats(out_stats, label="Output (After Processing)")
+
 
         print(f"✅ Output saved to: {output_file}")
 
