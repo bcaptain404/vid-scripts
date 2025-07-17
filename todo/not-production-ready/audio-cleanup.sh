@@ -60,7 +60,7 @@ show_help() {
 }
 
 smart_auto_suggest() {
-  python3 - <<EOF
+  python3 - "$INPUT" <<EOF
 import librosa, sys
 f = sys.argv[1]
 y, sr = librosa.load(f)
@@ -79,7 +79,7 @@ EOF
 }
 
 smart_auto_apply() {
-  local analysis=$(python3 - <<EOF
+  local analysis=$(python3 - "$INPUT" <<EOF
 import librosa, sys
 f = sys.argv[1]
 y, sr = librosa.load(f)
@@ -89,11 +89,12 @@ centroid = float(librosa.feature.spectral_centroid(y=y, sr=sr).mean())
 actions = []
 if rms < 0.03: actions.append("dynaudnorm")
 if rms > 0.3: actions.append("acompressor=threshold=-18dB:ratio=3:attack=20:release=250")
-if centroid > 4000: actions.append("highpass=f=80\nlowpass=f=12000")
+if centroid > 4000: actions.append("highpass=f=80")
+if centroid > 4000: actions.append("lowpass=f=12000")
 print("\n".join(actions))
 EOF
   )
-  IFS=$'\n'; ORDERED_FILTERS+=($analysis); unset IFS
+  IFS=$'\n'; for f in $analysis; do ORDERED_FILTERS+=("$f"); done; unset IFS
 }
 
 # Parse flags
@@ -134,7 +135,14 @@ done
 [[ -z "$INPUT" ]] && echo "❌ No input file specified." && show_help && exit 1
 
 [[ $AUTO_SUGGEST -eq 1 ]] && smart_auto_suggest "$INPUT"
-[[ $AUTO_APPLY -eq 1 ]] && smart_auto_apply "$INPUT"
+if [[ $AUTO_APPLY -eq 1 ]]; then
+  smart_auto_apply "$INPUT"
+  if [[ ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
+    echo "❌ No filters determined by --auto-apply"
+    exit 1
+  fi
+fi
+
 
 # If --all was requested and no custom flags exist
 if [[ $DO_ALL -eq 1 && ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
