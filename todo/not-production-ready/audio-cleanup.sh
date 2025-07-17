@@ -1,5 +1,5 @@
 #!/bin/bash
-# audio-cleanup.sh - Live music quick-cleaning utility
+# audio-cleanup.sh - Smarter-than-your-ex music/audio fixer
 
 set -e
 
@@ -7,35 +7,77 @@ show_help() {
   echo "Usage: $0 input.wav|input.mp4 [options]"
   echo ""
   echo "Options:"
-  echo "  --normalize          Apply basic peak normalization"
-  echo "  --normalize-extra    Apply LUFS loudness normalization"
-  echo "  --compress           Light compression"
-  echo "  --compress-extra     Aggressive compression"
-  echo "  --eq                 Cut sub-bass (<80Hz) & high fizz (>12kHz)"
-  echo "  --eq-extra           Slight midrange boost (1-5kHz)"
-  echo "  --no-vid             Don’t reattach video stream"
-  echo "  --mp3                Output to MP3 (implies --no-vid)"
-  echo "  --all                Do all: EQ → Compress → Normalize"
-  echo "  --out=FILE.xxx       Set output filename"
-  echo "  --overwrite          Allow overwrite of existing output"
-  echo "  --verbose            Print progress"
-  echo "  --debug              Show full ffmpeg commands"
-  echo "  --dry-run            Simulate execution without making changes"
-  echo "  --preset=TYPE        Use a preset: vocals, inst, music, podcast, audience, bar, loud-bar"
-  echo "  --auto               Placeholder for future intelligent analysis"
-  echo "  --install-deps       Installs ffmpeg via apt"
+  echo "  --normalize             Apply basic peak normalization"
+  echo "  --normalize-extra       LUFS loudness normalization"
+  echo "  --compress              Light compression"
+  echo "  --compress-extra        Aggressive compression"
+  echo "  --eq                    Cut sub-bass (<80Hz) & fizz (>12kHz)"
+  echo "  --eq-extra              Slight midrange boost"
+  echo "  --preset=TYPE           Preset: vocals, inst, music, podcast, audience, bar, loud-bar"
+  echo "  --all                   EQ -> Compress -> Normalize"
+  echo "  --auto                  Smart AF auto-detect via Python (requires --install-deps-full)"
+  echo "  --dry-run               Show what would be done"
+  echo "  --mp3                   Output as MP3 (implies --no-vid)"
+  echo "  --no-vid                Skip video reattachment"
+  echo "  --out=filename.ext      Custom output filename"
+  echo "  --overwrite             Allow overwriting existing output"
+  echo "  --verbose               Print what's happening"
+  echo "  --debug                 Print ffmpeg commands"
+  echo "  --install-deps          Install ffmpeg"
+  echo "  --install-deps-full     Install full stack (ffmpeg, python3, pip, numpy, librosa)"
+  echo "  -h, --help              Show this help"
   echo ""
-  echo "Default output: output_cleaned.wav or output_cleaned.mp3"
+  echo "Smart auto mode uses Python and librosa for real signal analysis."
+  echo ""
 }
 
 install_deps() {
-  sudo apt update
-  sudo apt install -y ffmpeg
-  echo "✅ Dependencies installed."
+  sudo apt update && sudo apt install -y ffmpeg
+  echo "✅ Basic dependencies installed."
   exit 0
 }
 
-# --- Vars ---
+install_deps_full() {
+  sudo apt update && sudo apt install -y ffmpeg python3 python3-pip
+  pip3 install numpy librosa soundfile --break-system-packages
+  echo "✅ Full dependencies installed (ffmpeg + Python + librosa)"
+  exit 0
+}
+
+smart_auto_detect() {
+  python3 - "$1" <<'EOF'
+import sys
+import librosa
+import numpy as np
+
+path = sys.argv[1]
+y, sr = librosa.load(path, sr=None)
+rms = np.mean(librosa.feature.rms(y=y))
+zcr = np.mean(librosa.feature.zero_crossing_rate(y))
+centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
+
+print("# Smart-AF Auto Analysis:")
+print(f"RMS loudness: {rms:.5f}")
+print(f"Zero-crossing rate: {zcr:.5f}")
+print(f"Spectral centroid: {centroid:.2f} Hz")
+
+if rms < 0.02:
+    print("--compress-extra")
+elif rms < 0.04:
+    print("--compress")
+else:
+    print("--no-compression-needed")
+
+if centroid < 1500:
+    print("--eq-extra")
+else:
+    print("--eq")
+
+print("--normalize")
+EOF
+  exit 0
+}
+
 INPUT=""
 OUTPUT_TYPE="wav"
 NO_VID=0
@@ -49,10 +91,10 @@ PRESET=""
 OUTPUT=""
 ORDERED_FILTERS=()
 
-# --- Parse args ---
 for arg in "$@"; do
   case $arg in
     --install-deps) install_deps ;;
+    --install-deps-full) install_deps_full ;;
     --normalize) ORDERED_FILTERS+=("dynaudnorm") ;;
     --normalize-extra) ORDERED_FILTERS+=("loudnorm=I=-14:TP=-1.5:LRA=11") ;;
     --compress) ORDERED_FILTERS+=("acompressor=threshold=-18dB:ratio=3:attack=20:release=250") ;;
@@ -66,12 +108,7 @@ for arg in "$@"; do
     --debug) DEBUG=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --auto) AUTO=1 ;;
-    --all)
-      ORDERED_FILTERS=("highpass=f=80" "lowpass=f=12000" \
-                       "acompressor=threshold=-18dB:ratio=3:attack=20:release=250" \
-                       "dynaudnorm")
-      DO_ALL=1
-      ;;
+    --all) ORDERED_FILTERS=("highpass=f=80" "lowpass=f=12000" "acompressor=threshold=-18dB:ratio=3:attack=20:release=250" "dynaudnorm") ;;
     --preset=*) PRESET="${arg#--preset=}" ;;
     --out=*) OUTPUT="${arg#--out=}" ;;
     *.wav|*.mp4|*.mov|*.mkv|*.flac) INPUT="$arg" ;;
@@ -80,7 +117,6 @@ for arg in "$@"; do
   esac
 done
 
-# --- Presets ---
 if [[ -n "$PRESET" ]]; then
   case "$PRESET" in
     vocals) ORDERED_FILTERS=("highpass=f=80" "lowpass=f=12000" "equalizer=f=2000:t=q:w=1:g=3" "acompressor=threshold=-18dB:ratio=3:attack=20:release=250" "dynaudnorm") ;;
@@ -94,33 +130,18 @@ if [[ -n "$PRESET" ]]; then
   esac
 fi
 
-# --- Auto analysis (placeholder) ---
 if [[ "$AUTO" -eq 1 ]]; then
-  echo "⚠️  --auto not implemented yet. Smarter than a monkey? Maybe. Smarter than an FFT? Not yet."
-  exit 1
+  smart_auto_detect "$INPUT"
+  exit 0
 fi
 
-# --- Validate ---
-if [[ -z "$INPUT" ]]; then
-  echo "❌ No input file specified."
-  show_help
-  exit 1
-fi
-
-if [[ ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
-  echo "❌ No processing steps specified."
-  show_help
-  exit 1
-fi
+if [[ -z "$INPUT" ]]; then echo "❌ No input file specified."; show_help; exit 1; fi
+if [[ ${#ORDERED_FILTERS[@]} -eq 0 ]]; then echo "❌ No processing steps specified."; show_help; exit 1; fi
 
 OUT_EXT="$OUTPUT_TYPE"
 [[ -z "$OUTPUT" ]] && OUTPUT="output_cleaned.$OUT_EXT"
 
-if [[ -e "$OUTPUT" && $OVERWRITE -ne 1 ]]; then
-  echo "❌ Output file '$OUTPUT' exists. Use --overwrite to override."
-  exit 1
-fi
-
+if [[ -e "$OUTPUT" && $OVERWRITE -ne 1 ]]; then echo "❌ Output file '$OUTPUT' exists. Use --overwrite to override."; exit 1; fi
 [[ $VERBOSE -eq 1 ]] && echo "🎧 Processing $INPUT → $OUTPUT"
 
 FILTER_CHAIN=$(IFS=, ; echo "${ORDERED_FILTERS[*]}")
