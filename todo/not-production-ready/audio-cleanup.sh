@@ -79,7 +79,8 @@ EOF
 }
 
 smart_auto_apply() {
-  local analysis=$(python3 - "$INPUT" <<EOF
+  local analysis
+  analysis=$(python3 - "$INPUT" <<EOF
 import librosa, sys
 f = sys.argv[1]
 y, sr = librosa.load(f)
@@ -94,7 +95,12 @@ if centroid > 4000: actions.append("lowpass=f=12000")
 print("\n".join(actions))
 EOF
   )
-  IFS=$'\n'; for f in $analysis; do ORDERED_FILTERS+=("$f"); done; unset IFS
+  IFS=$'\n' read -r -d '' -a ORDERED_FILTERS <<<"$analysis"$'\0'
+
+  if [[ ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
+    echo "❌ No filters determined by --auto-apply"
+    exit 1
+  fi
 }
 
 # Parse flags
@@ -142,7 +148,6 @@ if [[ $AUTO_APPLY -eq 1 ]]; then
     exit 1
   fi
 fi
-
 
 # If --all was requested and no custom flags exist
 if [[ $DO_ALL -eq 1 && ${#ORDERED_FILTERS[@]} -eq 0 ]]; then
