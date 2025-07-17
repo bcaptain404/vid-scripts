@@ -3,7 +3,7 @@ import librosa
 def analyze_audio(file):
     y, sr = librosa.load(file)
     rms = float(librosa.feature.rms(y=y).mean())
-    zcr = float(librosa.feature.zero_crossing_rate(y).mean())
+    zcr = float(librosa.feature.zero_crossing_rate(y=y).mean())
     centroid = float(librosa.feature.spectral_centroid(y=y, sr=sr).mean())
     return dict(rms=rms, zcr=zcr, centroid=centroid)
 
@@ -15,6 +15,7 @@ def suggest_filters(stats):
     if stats['rms'] < 0.03: print("--normalize")
     if stats['rms'] > 0.3: print("--compress")
     if stats['centroid'] > 4000: print("--eq")
+    if stats['centroid'] > 5000: print("--deess  # (sibilance detected)")
 
 def auto_filters(stats):
     filters = []
@@ -24,4 +25,7 @@ def auto_filters(stats):
         filters.append("acompressor=threshold=-18dB:ratio=3:attack=20:release=250")
     if stats['centroid'] > 3500:
         filters.extend(["highpass=f=80", "lowpass=f=12000"])
+    # Sibilance/harshness detection (high centroid)
+    if stats['centroid'] > 5000:
+        filters.append("deesser")
     return filters

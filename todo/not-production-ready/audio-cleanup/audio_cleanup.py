@@ -2,29 +2,33 @@
 """
 audio_cleanup.py - Smarter-than-your-ex music/audio fixer
 Usage:
-    python3 audio_cleanup.py input.wav|input.mp4 [options]
+    python3 audio_cleanup.py [-h] [--normalize] [--normalize-extra] [--compress] [--compress-extra] [--eq] [--eq-extra] [--deess] [--preset PRESET] [--all] [--auto-suggest] [--auto-apply] [--dry-run] [--mp3] [--no-vid] [--out OUT] [--overwrite] [--verbose] [--debug] [--install-deps] [--install-deps-full] input
 
-Options:
-    --normalize             Apply basic peak normalization
-    --normalize-extra       LUFS loudness normalization
-    --compress              Light compression
-    --compress-extra        Aggressive compression
-    --eq                    Cut sub-bass (<80Hz) & fizz (>12kHz)
-    --eq-extra              Slight midrange boost
-    --preset=TYPE           Preset: vocals, inst, music, podcast, audience, bar, loud-bar
-    --all                   EQ -> Compress -> Normalize
-    --auto-suggest          Smart AF analysis only (shows recommended flags)
-    --auto-apply            Smart AF full-auto (analyze + apply)
-    --dry-run               Show what would be done
-    --mp3                   Output as MP3 (implies --no-vid)
-    --no-vid                Skip video reattachment
-    --out=filename.ext      Custom output filename
-    --overwrite             Allow overwriting existing output
-    --verbose               Print what's happening
-    --debug                 Print debug stuff
-    --install-deps          Install basic dependencies
-    --install-deps-full     Install basic dependencies + Python + librosa (for --auto-*)
-    -h, --help              Show this help
+positional arguments:
+  input                 Input file (.wav, .mp4, .mov, .mkv, .flac)
+
+options:
+  --normalize           Apply basic peak normalization
+  --normalize-extra     LUFS loudness normalization
+  --compress            Light compression
+  --compress-extra      Aggressive compression
+  --eq                  Cut sub-bass (<80Hz) & fizz (>12kHz)
+  --eq-extra            Slight midrange boost
+  --deess               Apply de-essing (reduce harsh S sounds)
+  --preset PRESET       Preset: vocals, inst, music, podcast, audience, bar, loud-bar
+  --all                 EQ -> Compress -> Normalize
+  --auto-suggest        Smart AF analysis only (shows recommended flags)
+  --auto-apply          Smart AF full-auto (analyze + apply)
+  --dry-run             Show what would be done
+  --mp3                 Output as MP3 (implies --no-vid)
+  --no-vid              Skip video reattachment
+  --out OUT             Custom output filename
+  --overwrite           Allow overwriting existing output
+  --verbose             Print what's happening
+  --debug               Print debug stuff
+  --install-deps        Install basic dependencies
+  --install-deps-full   Install basic dependencies + Python + librosa (for --auto-*)
+  -h, --help            Show this help
 """
 
 import sys
@@ -68,6 +72,7 @@ def main():
     parser.add_argument("--compress-extra", action="store_true")
     parser.add_argument("--eq", action="store_true")
     parser.add_argument("--eq-extra", action="store_true")
+    parser.add_argument("--deess", action="store_true", help="Apply de-essing (reduce harsh S sounds)")
     parser.add_argument("--preset", type=str)
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--auto-suggest", action="store_true")
@@ -121,6 +126,8 @@ def main():
         filters.extend(["highpass=f=80", "lowpass=f=12000"])
     if args.eq_extra:
         filters.append("equalizer=f=2000:t=q:w=1:g=3")
+    if args.deess:
+        filters.append("deesser")
 
     if args.auto_suggest or args.auto_apply:
         audio_stats = analyze_audio(input_file)
