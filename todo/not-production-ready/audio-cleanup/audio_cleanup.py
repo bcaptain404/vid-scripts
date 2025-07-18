@@ -35,7 +35,7 @@ Options:
 Supported formats: .wav, .mp4, .mov, .mkv, .flac
 
 Examples:
-    python3 audio_cleanup.py song.mp4 --auto-apply --rotate=90 --out=cleaned.mp4
+    python3 audio_cleanup.py song.mp4 --auto-apply --rotate-cw=90 --out=cleaned.mp4
     python3 audio_cleanup.py gig.wav --preset=vocals --mp3 --out=final.mp3
     python3 audio_cleanup.py jam.wav --classify
 """
@@ -190,11 +190,21 @@ def main():
         print(f"⚙️ Filters to apply:")
         for f in filters:
             print(f"  - {f}")
-        if args.rotate is not None:
-            print(f"  - Video rotation: {args.rotate} degrees")
+        rotation = None
+        direction = "cw"
+        if args.rotate_cw is not None and args.rotate_ccw is not None:
+            print("❌ Only one of --rotate-cw or --rotate-ccw may be used at a time.")
+            sys.exit(1)
+        elif args.rotate_cw is not None:
+            rotation = args.rotate_cw
+            direction = "cw"
+        elif args.rotate_ccw is not None:
+            rotation = args.rotate_ccw
+            direction = "ccw"
+        if rotation is not None:
+            print(f"  - Video rotation: {rotation} degrees {direction}")
         sys.exit(0)
 
-    # Temp files
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_audio = os.path.join(tmpdir, "audio.wav")
         temp_processed = os.path.join(tmpdir, "processed.wav")
@@ -216,51 +226,48 @@ def main():
         if args.no_vid or in_ext.lower() == ".wav":
             final_out = output_file
             if args.mp3:
-                # Convert to mp3
                 ffmpeg_cmd([
                     "ffmpeg", "-y", "-i", temp_processed, "-codec:a", "libmp3lame", "-q:a", "2", final_out
                 ], verbose=args.verbose)
             else:
                 shutil.copy(temp_processed, final_out)
         else:
-            # Extract video (no audio)
             ffmpeg_cmd([
                 "ffmpeg", "-y", "-i", input_file, "-an", "-c:v", "copy", temp_video
             ], verbose=args.verbose)
 
-        # Apply rotation if requested
-        rotation = None
-        direction = "cw"
-        if args.rotate_cw is not None and args.rotate_ccw is not None:
-            print("❌ Only one of --rotate-cw or --rotate-ccw may be used at a time.")
-            sys.exit(1)
-        elif args.rotate_cw is not None:
-            rotation = args.rotate_cw
+            # Rotation debug/logic
+            rotation = None
             direction = "cw"
-        elif args.rotate_ccw is not None:
-            rotation = args.rotate_ccw
-            direction = "ccw"
-
-        if rotation is not None:
-            rot_filter = get_video_rotation_filter(rotation, direction)
-            if rot_filter is None:
-                print(f"❌ Invalid rotation: {rotation} {direction}")
+            if args.rotate_cw is not None and args.rotate_ccw is not None:
+                print("❌ Only one of --rotate-cw or --rotate-ccw may be used at a time.")
                 sys.exit(1)
-            ffmpeg_cmd([
-                "ffmpeg", "-y", "-i", temp_video, "-vf", rot_filter, "-an", "-c:v", "libx264", "-preset", "ultrafast", temp_rotated
-            ], verbose=args.verbose)
-            temp_video_out = temp_rotated
-        else:
-            temp_video_out = temp_video
+            elif args.rotate_cw is not None:
+                rotation = args.rotate_cw
+                direction = "cw"
+            elif args.rotate_ccw is not None:
+                rotation = args.rotate_ccw
+                direction = "ccw"
 
+            if rotation is not None:
+                rot_filter = get_video_rotation_filter(rotation, direction)
+                print(f"Rotating video: {rotation} degrees {direction}, filter: {rot_filter}")
+                if rot_filter is None:
+                    print(f"❌ Invalid rotation: {rotation} {direction}")
+                    sys.exit(1)
+                ffmpeg_cmd([
+                    "ffmpeg", "-y", "-i", temp_video, "-vf", rot_filter, "-an", "-c:v", "libx264", "-preset", "ultrafast", temp_rotated
+                ], verbose=args.verbose)
+                temp_video_out = temp_rotated
+            else:
+                temp_video_out = temp_video
 
-            # Merge processed audio and video
+            print(f"Combining video ({temp_video_out}) + audio ({temp_processed}) to -> {output_file}")
             ffmpeg_cmd([
                 "ffmpeg", "-y", "-i", temp_video_out, "-i", temp_processed,
                 "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-shortest", output_file
             ], verbose=args.verbose)
 
-        # After output, if report is requested
         if args.report:
             in_stats = analyze_audio(input_file)
             print_stats(in_stats, label="Input (Before Processing)")
