@@ -21,6 +21,7 @@ Options:
     --dry-run               Show what would be done (no output written)
     --mp3                   Output as MP3 (implies --no-vid)
     --no-vid                Skip video reattachment (audio-only output)
+    --rotate=X              Rotate video X degrees (supports 90, 180, 270 or any float; only affects video files)
     --out=filename.ext      Custom output filename
     --overwrite             Allow overwriting existing output
     --verbose               Print what's happening
@@ -33,10 +34,9 @@ Options:
 Supported formats: .wav, .mp4, .mov, .mkv, .flac
 
 Examples:
-    python3 audio_cleanup.py song.mp4 --auto-apply --out=cleaned.mp4
-    python3 audio_cleanup.py jam.wav --classify
+    python3 audio_cleanup.py song.mp4 --auto-apply --rotate=90 --out=cleaned.mp4
     python3 audio_cleanup.py gig.wav --preset=vocals --mp3 --out=final.mp3
-    python3 audio_cleanup.py track.wav --auto-suggest
+    python3 audio_cleanup.py jam.wav --classify
 """
 
 import sys
@@ -71,6 +71,23 @@ def ffmpeg_cmd(args, verbose=False):
         sys.exit(1)
     return result
 
+def get_video_rotation_filter(degrees):
+    # Special cases for 90, 180, 270 (hardware-accelerated in ffmpeg)
+    try:
+        angle = float(degrees)
+        angle_mod = angle % 360
+        if angle_mod in [90, -270]:
+            return "transpose=1"
+        elif angle_mod in [270, -90]:
+            return "transpose=2"
+        elif angle_mod in [180, -180]:
+            return "transpose=2,transpose=2"
+        else:
+            radians = angle * 3.141592653589793 / 180.0
+            return f"rotate={radians}:bilinear=1"
+    except Exception:
+        return None
+
 def main():
     parser = argparse.ArgumentParser(description="Audio Cleanup Tool")
     parser.add_argument("input", help="Input file (.wav, .mp4, .mov, .mkv, .flac)")
@@ -89,6 +106,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--mp3", action="store_true")
     parser.add_argument("--no-vid", action="store_true")
+    parser.add_argument("--rotate", type=float, default=None, help="Rotate video by X degrees")
     parser.add_argument("--out", type=str, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -111,7 +129,6 @@ def main():
         print(f"❌ Input file '{input_file}' not found.")
         sys.exit(1)
 
-    # Allow only supported formats for sanity
     allowed_ext = (".wav", ".mp4", ".mov", ".mkv", ".flac")
     basename, in_ext = os.path.splitext(os.path.basename(input_file))
     if in_ext.lower() not in allowed_ext:
@@ -134,7 +151,6 @@ def main():
         sys.exit(0)
 
     filters = []
-    # Handle flags to build filter list
     if args.all:
         filters = [
             "highpass=f=80", "lowpass=f=12000",
@@ -188,12 +204,16 @@ def main():
         print(f"⚙️ Filters to apply:")
         for f in filters:
             print(f"  - {f}")
+        if args.rotate is not None:
+            print(f"  - Video rotation: {args.rotate} degrees")
         sys.exit(0)
 
     # Temp files
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_audio = os.path.join(tmpdir, "audio.wav")
         temp_processed = os.path.join(tmpdir, "processed.wav")
+        temp_video = os.path.join(tmpdir, "video.mp4")
+        temp_rotated = os.path.join(tmpdir, "video_rotated.mp4")
 
         # Extract audio (if input is video)
         ffmpeg_cmd([
@@ -206,7 +226,7 @@ def main():
             "ffmpeg", "-y", "-i", temp_audio, "-af", filter_chain, temp_processed
         ], verbose=args.verbose)
 
-        # Handle reattachment or output type
+        # Handle output based on options
         if args.no_vid or in_ext.lower() == ".wav":
             final_out = output_file
             if args.mp3:
@@ -217,9 +237,27 @@ def main():
             else:
                 shutil.copy(temp_processed, final_out)
         else:
-            # Reattach to video
+            # Extract video (no audio)
             ffmpeg_cmd([
-                "ffmpeg", "-y", "-i", input_file, "-i", temp_processed,
+                "ffmpeg", "-y", "-i", input_file, "-an", "-c:v", "copy", temp_video
+            ], verbose=args.verbose)
+
+            # Apply rotation if requested
+            if args.rotate is not None:
+                rot_filter = get_video_rotation_filter(args.rotate)
+                if rot_filter is None:
+                    print(f"❌ Invalid rotation: {args.rotate}")
+                    sys.exit(1)
+                ffmpeg_cmd([
+                    "ffmpeg", "-y", "-i", temp_video, "-vf", rot_filter, "-an", "-c:v", "libx264", "-preset", "ultrafast", temp_rotated
+                ], verbose=args.verbose)
+                temp_video_out = temp_rotated
+            else:
+                temp_video_out = temp_video
+
+            # Merge processed audio and video
+            ffmpeg_cmd([
+                "ffmpeg", "-y", "-i", temp_video_out, "-i", temp_processed,
                 "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-shortest", output_file
             ], verbose=args.verbose)
 
@@ -227,10 +265,8 @@ def main():
         if args.report:
             in_stats = analyze_audio(input_file)
             print_stats(in_stats, label="Input (Before Processing)")
-            # Figure out actual audio file for output:
             out_analyze = output_file
             if not args.no_vid and in_ext.lower() != ".wav" and not args.mp3:
-                # Output is video, need to extract audio to temp
                 temp_out_audio = os.path.join(tmpdir, "final_out.wav")
                 ffmpeg_cmd([
                     "ffmpeg", "-y", "-i", output_file, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", temp_out_audio
