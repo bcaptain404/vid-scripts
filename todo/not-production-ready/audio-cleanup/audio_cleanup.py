@@ -21,7 +21,8 @@ Options:
     --dry-run               Show what would be done (no output written)
     --mp3                   Output as MP3 (implies --no-vid)
     --no-vid                Skip video reattachment (audio-only output)
-    --rotate=X              Rotate video X degrees (supports 90, 180, 270 or any float; only affects video files)
+    --rotate-cw=X           Rotate video clockwise by X degrees (supports 90, 180, 270 or any float; only for video)
+    --rotate-ccw=X          Rotate video counterclockwise by X degrees (same)
     --out=filename.ext      Custom output filename
     --overwrite             Allow overwriting existing output
     --verbose               Print what's happening
@@ -47,6 +48,7 @@ import shutil
 import argparse
 
 from audio_analysis import analyze_audio, suggest_filters, auto_filters, print_stats, classify_content, suggest_preset
+from vid_tools import get_video_rotation_filter
 
 def install_deps(full=False):
     import platform
@@ -71,23 +73,6 @@ def ffmpeg_cmd(args, verbose=False):
         sys.exit(1)
     return result
 
-def get_video_rotation_filter(degrees):
-    # Special cases for 90, 180, 270 (hardware-accelerated in ffmpeg)
-    try:
-        angle = float(degrees)
-        angle_mod = angle % 360
-        if angle_mod in [90, -270]:
-            return "transpose=1"
-        elif angle_mod in [270, -90]:
-            return "transpose=2"
-        elif angle_mod in [180, -180]:
-            return "transpose=2,transpose=2"
-        else:
-            radians = angle * 3.141592653589793 / 180.0
-            return f"rotate={radians}:bilinear=1"
-    except Exception:
-        return None
-
 def main():
     parser = argparse.ArgumentParser(description="Audio Cleanup Tool")
     parser.add_argument("input", help="Input file (.wav, .mp4, .mov, .mkv, .flac)")
@@ -106,7 +91,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--mp3", action="store_true")
     parser.add_argument("--no-vid", action="store_true")
-    parser.add_argument("--rotate", type=float, default=None, help="Rotate video by X degrees")
+    parser.add_argument("--rotate-cw", type=float, default=None, help="Rotate video clockwise by X degrees")
+    parser.add_argument("--rotate-ccw", type=float, default=None, help="Rotate video counterclockwise by X degrees")
     parser.add_argument("--out", type=str, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -242,18 +228,31 @@ def main():
                 "ffmpeg", "-y", "-i", input_file, "-an", "-c:v", "copy", temp_video
             ], verbose=args.verbose)
 
-            # Apply rotation if requested
-            if args.rotate is not None:
-                rot_filter = get_video_rotation_filter(args.rotate)
-                if rot_filter is None:
-                    print(f"❌ Invalid rotation: {args.rotate}")
-                    sys.exit(1)
-                ffmpeg_cmd([
-                    "ffmpeg", "-y", "-i", temp_video, "-vf", rot_filter, "-an", "-c:v", "libx264", "-preset", "ultrafast", temp_rotated
-                ], verbose=args.verbose)
-                temp_video_out = temp_rotated
-            else:
-                temp_video_out = temp_video
+        # Apply rotation if requested
+        rotation = None
+        direction = "cw"
+        if args.rotate_cw is not None and args.rotate_ccw is not None:
+            print("❌ Only one of --rotate-cw or --rotate-ccw may be used at a time.")
+            sys.exit(1)
+        elif args.rotate_cw is not None:
+            rotation = args.rotate_cw
+            direction = "cw"
+        elif args.rotate_ccw is not None:
+            rotation = args.rotate_ccw
+            direction = "ccw"
+
+        if rotation is not None:
+            rot_filter = get_video_rotation_filter(rotation, direction)
+            if rot_filter is None:
+                print(f"❌ Invalid rotation: {rotation} {direction}")
+                sys.exit(1)
+            ffmpeg_cmd([
+                "ffmpeg", "-y", "-i", temp_video, "-vf", rot_filter, "-an", "-c:v", "libx264", "-preset", "ultrafast", temp_rotated
+            ], verbose=args.verbose)
+            temp_video_out = temp_rotated
+        else:
+            temp_video_out = temp_video
+
 
             # Merge processed audio and video
             ffmpeg_cmd([
