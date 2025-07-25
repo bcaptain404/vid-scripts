@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+#todo allow --rotate* even if filters aren't supplied in arguments
+
 """
 audio_cleanup.py - Smarter-than-your-ex music/audio fixer
 
@@ -83,6 +86,7 @@ def main():
     parser.add_argument("--eq", action="store_true")
     parser.add_argument("--eq-extra", action="store_true")
     parser.add_argument("--deess", action="store_true", help="Apply de-essing (reduce harsh S sounds)")
+    parser.add_argument("--tame-treble", action="store_true", help="Reduces harsh upper-treble frequencies (6kHz+)")
     parser.add_argument("--preset", type=str)
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--auto-suggest", action="store_true")
@@ -157,6 +161,11 @@ def main():
         filters.append("equalizer=f=2000:t=q:w=1:g=3")
     if args.deess:
         filters.append("deesser")
+    if args.tame_treble:
+        filters.extend([
+            "equalizer=f=6000:t=q:w=1.5:g=-6",
+            "equalizer=f=10000:t=q:w=1.5:g=-8"
+        ])
     if args.preset:
         if args.preset == "vocals":
             filters = ["highpass=f=80", "lowpass=f=12000", "deesser", "loudnorm=I=-14:TP=-1.5:LRA=11"]

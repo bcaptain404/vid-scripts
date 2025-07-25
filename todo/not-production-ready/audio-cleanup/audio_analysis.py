@@ -79,6 +79,11 @@ def auto_filters(stats):
             "acompressor=threshold=-18dB:ratio=3:attack=20:release=250",
             "loudnorm=I=-14:TP=-1.5:LRA=11"
         ])
+    if stats['centroid'] > 6000:
+        filters.extend([
+            "equalizer=f=6000:t=q:w=1.5:g=-6",
+            "equalizer=f=10000:t=q:w=1.5:g=-8"
+        ])
     # Add broad EQ if centroid > 3500 Hz and not already in filters
     if stats['centroid'] > 3500 and "highpass=f=80" not in filters:
         filters.extend(["highpass=f=80", "lowpass=f=12000"])
