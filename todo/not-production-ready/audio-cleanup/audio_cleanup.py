@@ -16,7 +16,12 @@ Options:
     --eq                    Cut sub-bass (<80Hz) & fizz (>12kHz)
     --eq-extra              Slight midrange boost
     --deess                 Apply de-essing (reduce harsh S sounds)
-    --preset=TYPE           Preset: vocals, inst, music, podcast, audience, bar, loud-bar
+    --preset=TYPE           Apply a preset filter chain:
+                          vocals     = highpass, lowpass, de-ess, LUFS normalize
+                          inst       = highpass, extended lowpass, LUFS normalize
+                          music      = EQ, light compression, LUFS normalize
+                          podcast    = narrow EQ, LUFS normalize (speech focus)
+                          (Note: aliases like 'audience', 'bar', 'loud-bar' may be added later)
     --all                   EQ -> Compress -> Normalize
     --auto-suggest          Smart AF analysis only (shows recommended flags)
     --auto-apply            Smart AF full-auto (analyze + apply)
