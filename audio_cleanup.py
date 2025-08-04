@@ -91,12 +91,14 @@ def main():
     parser.add_argument("--eq", action="store_true")
     parser.add_argument("--eq-extra", action="store_true")
     parser.add_argument("--deess", action="store_true", help="Apply de-essing (reduce harsh S sounds)")
-    parser.add_argument("--tame-treble", action="store_true", help="Reduces harsh upper-treble frequencies (6kHz+)")
+    parser.add_argument("--tame-treble", type=int, choices=range(1, 11), metavar="[1-10]",
+                    help="Reduce harsh treble (6kHz+). 1 = subtle, 10 = aggressive")
     parser.add_argument("--preset", type=str)
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--auto-suggest", action="store_true")
     parser.add_argument("--auto-apply", action="store_true")
     parser.add_argument("--classify", action="store_true", help="Print content type guess and recommended preset")
+    parser.add_argument("--img", type=str, help="Use a still image to generate video with input audio (outputs .mp4)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--mp3", action="store_true")
     parser.add_argument("--no-vid", action="store_true")
@@ -145,6 +147,14 @@ def main():
         print(f"Suggested preset: --preset={preset}")
         sys.exit(0)
 
+    if args.img:
+        if not os.path.exists(args.img):
+            print(f"❌ Image file '{args.img}' not found.")
+            sys.exit(1)
+        if not input_file.lower().endswith((".mp3", ".wav", ".flac")):
+            print("❌ --img can only be used with audio files.")
+            sys.exit(1)
+
     filters = []
     if args.all:
         filters = [
@@ -167,10 +177,21 @@ def main():
     if args.deess:
         filters.append("deesser")
     if args.tame_treble:
-        filters.extend([
-            "equalizer=f=6000:t=q:w=1.5:g=-6",
-            "equalizer=f=10000:t=q:w=1.5:g=-8"
-        ])
+        # Map level to EQ gain (more negative = more cut)
+        level = args.tame_treble
+        if level < 1 or level > 10:
+            print("❌ --tame-treble must be between 1 and 10")
+            sys.exit(1)
+
+        # Gain values scale linearly (you can tweak this mapping)
+        g6000 = round(-1 * level, 1)    # e.g., -1 to -10 dB
+        g10000 = round(-1.5 * level, 1) # e.g., -1.5 to -15 dB
+        g14000 = round(-0.75 * level, 1) if level >= 6 else 0  # Optional high-end smoothing at higher levels
+
+        filters.append(f"equalizer=f=6000:t=q:w=1.5:g={g6000}")
+        filters.append(f"equalizer=f=10000:t=q:w=1.5:g={g10000}")
+        if g14000 < 0:
+            filters.append(f"equalizer=f=14000:t=q:w=1.2:g={g14000}")
     if args.preset:
         if args.preset == "vocals":
             filters = ["highpass=f=80", "lowpass=f=12000", "deesser", "loudnorm=I=-14:TP=-1.5:LRA=11"]
