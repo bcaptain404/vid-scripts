@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# todo: --install-deps should not require an input argument (bug)
 #todo allow --rotate* even if filters aren't supplied in arguments
 
 """
@@ -31,6 +32,7 @@ Options:
     --no-vid                Skip video reattachment (audio-only output)
     --rotate-cw=X           Rotate video clockwise by X degrees (supports 90, 180, 270 or any float; only for video)
     --rotate-ccw=X          Rotate video counterclockwise by X degrees (same)
+    --img=FILE              Use a still image to generate a video from the input audio
     --out=filename.ext      Custom output filename
     --overwrite             Allow overwriting existing output
     --verbose               Print what's happening
@@ -126,14 +128,19 @@ def main():
         print(f"❌ Input file '{input_file}' not found.")
         sys.exit(1)
 
-    allowed_ext = (".wav", ".mp4", ".mov", ".mkv", ".flac")
+    supported_input_formats = (".wav", ".mp3", ".flac", ".mp4", ".mov", ".mkv")
+
     basename, in_ext = os.path.splitext(os.path.basename(input_file))
-    if in_ext.lower() not in allowed_ext:
+    if in_ext.lower() not in supported_input_formats:
         print(f"❌ Unsupported input file format: {in_ext}")
         sys.exit(1)
 
-    output_type = "mp3" if args.mp3 else "wav"
-    output_file = args.out or f"{basename}_cleaned.{output_type}"
+    if args.img:
+        output_file = args.out or f"{basename}_with_img.mp4"
+    else:
+        output_type = "mp3" if args.mp3 else "wav"
+        output_file = args.out or f"{basename}_cleaned.{output_type}"
+
     if os.path.exists(output_file) and not args.overwrite:
         print(f"❌ Output file '{output_file}' exists. Use --overwrite.")
         sys.exit(1)
@@ -215,7 +222,7 @@ def main():
         if args.verbose:
             print(f"Auto-applied filters: {filters}")
 
-    if not filters:
+    if not filters and not args.img:
         print("❌ No filters specified/applied. Use --all or other flags.")
         sys.exit(1)
 
@@ -238,6 +245,45 @@ def main():
             direction = "ccw"
         if rotation is not None:
             print(f"  - Video rotation: {rotation} degrees {direction}")
+        sys.exit(0)
+
+    if args.img:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_audio = os.path.join(tmpdir, "audio.wav")
+            temp_processed = os.path.join(tmpdir, "processed.wav")
+
+            # Convert input to PCM WAV
+            ffmpeg_cmd([
+                "ffmpeg", "-y", "-i", input_file, "-acodec", "pcm_s16le", "-ar", "44100", temp_audio
+            ], verbose=args.verbose)
+
+            # Apply filters if any
+            if filters:
+                filter_chain = ",".join(filters)
+                ffmpeg_cmd([
+                    "ffmpeg", "-y", "-i", temp_audio, "-af", filter_chain, temp_processed
+                ], verbose=args.verbose)
+            else:
+                shutil.copy(temp_audio, temp_processed)
+
+            # Create video from image + audio (force even width if needed)
+            ffmpeg_cmd([
+                "ffmpeg", "-y", "-loop", "1", "-i", args.img,
+                "-i", temp_processed,
+                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", "-pix_fmt", "yuv420p",
+                output_file
+            ], verbose=args.verbose)
+
+            if args.report:
+                in_stats = analyze_audio(input_file)
+                print_stats(in_stats, label="Input (Before Processing)")
+                out_stats = analyze_audio(temp_processed)
+                print_stats(out_stats, label="Output (After Processing)")
+
+            print(f"✅ Output saved to: {output_file}")
         sys.exit(0)
 
     with tempfile.TemporaryDirectory() as tmpdir:
