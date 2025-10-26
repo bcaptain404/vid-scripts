@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+#todo: thjis caused the audio and video to desync around 1 minute 50 seconds:
+# $ ./audio_cleanup.py /tmp/ptom-2025-09-02_walkaway.mp4 --compress --normalize --out /tmp/ptom-2025-09-02_walkaway_cleanedup.mp4 
+# Combining video (/tmp/tmpd34w3mjq/video.mp4) + audio (/tmp/tmpd34w3mjq/processed.wav) to -> /tmp/ptom-2025-09-02_walkaway_cleanedup.mp4
+# happens regardless of --normalize or --compress or either or both or none.
+
+
 # todo: --install-deps should not require an input argument (bug)
 #todo allow --rotate* even if filters aren't supplied in arguments
 
