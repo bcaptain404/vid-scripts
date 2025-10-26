@@ -1,6 +1,6 @@
 #!/bin/bash
 # vid-crop.sh — hybrid mkvmerge/ffmpeg cropper with fallback
-# v0.3  (2025-10-26)
+# v0.5  (2025-10-26)
 
 set -o errexit -o pipefail -o nounset
 
@@ -52,45 +52,76 @@ trap handle_signal SIGINT SIGTERM SIGHUP
 # ---- Help ----
 show_help() {
   cat <<EOF
-$0 v0.3
-Usage: $(basename "$0") --in=FILE --start=TIME --end=TIME [options]
+$0 v0.5
+Usage: $(basename "$0") -in FILE -start TIME -end TIME [options]
 
 Required:
-  --in=FILE         Input video file
-  --start=TIME      Start time (e.g., 02:25:48)
-  --end=TIME        End time (e.g., 02:29:27)
+  -in FILE          Input video file
+  -start TIME       Start time (e.g., 02:25:48)
+  -end TIME         End time (e.g., 02:29:27)
 
 Optional:
-  --out=FILE        Output filename (defaults to input name + '_out.EXT')
-  --overwrite       Allow overwrite of output file (else will bail)
+  -out FILE         Output filename (defaults to input name + '_out.EXT')
+  -overwrite        Allow overwrite of output file (else will bail)
   -v, --verbose     Verbose mode
   -q, --quiet       Quiet mode
-  -ff=ARG           Extra argument to ffmpeg (repeatable)
-  -mk=ARG           Extra argument to mkvmerge (repeatable)
+  -ff ARG           Extra argument to ffmpeg (repeatable)
+  -mk ARG           Extra argument to mkvmerge (repeatable)
   -h, --help        Show this help and exit
+
+Notes:
+  - Old GNU-style flags like --in=file are deprecated but still accepted (with warning).
 EOF
 }
 
+# ---- Path Expansion ----
+expand_path() {
+  local path="$1"
+  [[ "$path" == "~/"* ]] && echo "${HOME}/${path#~/}" || echo "$path"
+}
+
 # ---- Arg Parsing ----
-for arg in "$@"; do
-  case $arg in
-    --in=*)      INPUT="${arg#*=}" ;;
-    --out=*)     OUTPUT="${arg#*=}" ;;
-    --start=*)   START="${arg#*=}" ;;
-    --end=*)     END="${arg#*=}" ;;
-    --overwrite) OVERWRITE=1 ;;
-    -v|--verbose) VERBOSE=1 ;;
-    -q|--quiet)   QUIET=1 ;;
-    -ff=*)       FF_ARGS+=("${arg#*=}") ;;
-    -mk=*)       MK_ARGS+=("${arg#*=}") ;;
-    -h|--help)   show_help; exit 0 ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    # Modern syntax
+    -in|--in)        INPUT="$2"; shift 2 ;;
+    -out|--out)      OUTPUT="$2"; shift 2 ;;
+    -start|--start)  START="$2"; shift 2 ;;
+    -end|--end|--stop) END="$2"; shift 2 ;;
+    -overwrite|--overwrite) OVERWRITE=1; shift ;;
+    -v|--verbose)    VERBOSE=1; shift ;;
+    -q|--quiet)      QUIET=1; shift ;;
+    -ff|--ff)        FF_ARGS+=("$2"); shift 2 ;;
+    -mk|--mk)        MK_ARGS+=("$2"); shift 2 ;;
+    -h|--help)       show_help; exit 0 ;;
+
+    # Legacy syntax with =
+    --*=*)
+      warn_flag="${1%%=*}"
+      err "Warning: Old-style $warn_flag=value syntax is deprecated. Use -flag value instead."
+      key="${1%%=*}"
+      val="${1#*=}"
+      case "$key" in
+        --in)      INPUT="$val" ;;
+        --out)     OUTPUT="$val" ;;
+        --start)   START="$val" ;;
+        --end)     END="$val" ;;
+        --ff)      FF_ARGS+=("$val") ;;
+        --mk)      MK_ARGS+=("$val") ;;
+        *) err "Unknown legacy argument: $key"; show_help; exit 1 ;;
+      esac
+      shift ;;
     *)
-      err "Unknown argument: $arg"
+      err "Unknown argument: $1"
       show_help
       exit 1
       ;;
   esac
 done
+
+# ---- Expand ~ in paths ----
+INPUT=$(expand_path "$INPUT")
+OUTPUT=$(expand_path "$OUTPUT")
 
 # ---- Check Dependencies ----
 for cmd in ffmpeg mkvmerge; do
@@ -115,7 +146,7 @@ fi
 
 # ---- Overwrite Check ----
 if [[ -e "$OUTPUT" && "$OVERWRITE" -eq 0 ]]; then
-  err "Output file $OUTPUT exists. Use --overwrite to allow replacing it."
+  err "Output file $OUTPUT exists. Use -overwrite to allow replacing it."
   exit 1
 fi
 
