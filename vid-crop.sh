@@ -1,7 +1,8 @@
 #!/bin/bash
 # vid-crop.sh — hybrid mkvmerge/ffmpeg cropper with fallback
 # v0.5  (2025-10-26)
-
+# todo: make out dir if not exist. otherwise exits thinking it succeeded
+#
 set -o errexit -o pipefail -o nounset
 
 # ---- UUID and Paths ----
